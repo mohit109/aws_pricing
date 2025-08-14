@@ -1,8 +1,8 @@
 # app.py
 import streamlit as st
 import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as go
+import matplotlib.pyplot as plt
+import numpy as np
 
 # Page configuration with custom theme
 st.set_page_config(
@@ -12,13 +12,13 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS for better styling
+# Custom CSS for better styling with green, red, purple, blue, navy blue colors
 st.markdown("""
 <style>
     .main-header {
         text-align: center;
         padding: 1rem 0;
-        background: linear-gradient(90deg, #FF6B35, #F7931E);
+        background: linear-gradient(90deg, #1e3a8a, #3b82f6);
         color: white;
         border-radius: 10px;
         margin-bottom: 2rem;
@@ -29,7 +29,7 @@ st.markdown("""
         padding: 1.5rem;
         border-radius: 10px;
         box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        border-left: 4px solid #FF6B35;
+        border-left: 4px solid #22c55e;
         margin: 0.5rem 0;
     }
     
@@ -41,7 +41,7 @@ st.markdown("""
     }
     
     .total-cost {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        background: linear-gradient(135deg, #7c3aed 0%, #1e3a8a 100%);
         color: white;
         padding: 2rem;
         border-radius: 15px;
@@ -57,19 +57,55 @@ st.markdown("""
     }
     
     .warning-box {
-        background: #fff3cd;
-        border: 1px solid #ffeaa7;
+        background: #fef3c7;
+        border: 1px solid #fbbf24;
         padding: 1rem;
         border-radius: 5px;
         margin: 1rem 0;
     }
     
     .success-box {
-        background: #d1f2eb;
-        border: 1px solid #a7e6cc;
+        background: #dcfce7;
+        border: 1px solid #22c55e;
         padding: 1rem;
         border-radius: 5px;
         margin: 1rem 0;
+    }
+    
+    .metric-card-green {
+        background: white;
+        padding: 1.5rem;
+        border-radius: 10px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        border-left: 4px solid #22c55e;
+        margin: 0.5rem 0;
+    }
+    
+    .metric-card-blue {
+        background: white;
+        padding: 1.5rem;
+        border-radius: 10px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        border-left: 4px solid #3b82f6;
+        margin: 0.5rem 0;
+    }
+    
+    .metric-card-purple {
+        background: white;
+        padding: 1.5rem;
+        border-radius: 10px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        border-left: 4px solid #7c3aed;
+        margin: 0.5rem 0;
+    }
+    
+    .metric-card-navy {
+        background: white;
+        padding: 1.5rem;
+        border-radius: 10px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        border-left: 4px solid #1e3a8a;
+        margin: 0.5rem 0;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -119,7 +155,14 @@ with st.sidebar:
     
     # Show model info
     row = df.loc[model]
-    st.info(f"📊 **{model}**\n\nInput: ${row['in_per_1k']:.6f}/1K tokens\nOutput: ${row['out_per_1k']:.6f}/1K tokens")
+    st.markdown(f"""
+    <div style="background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%); 
+                color: white; padding: 1rem; border-radius: 8px; margin: 0.5rem 0;">
+        <strong>📊 {model}</strong><br>
+        Input: ${row['in_per_1k']:.6f}/1K tokens<br>
+        Output: ${row['out_per_1k']:.6f}/1K tokens
+    </div>
+    """, unsafe_allow_html=True)
     
     st.markdown("---")
     
@@ -132,7 +175,12 @@ with st.sidebar:
     )
     
     if use_batch and pd.isna(row["batch_in_per_1k"]):
-        st.warning("⚠️ Batch pricing not available for this model. Using standard pricing.")
+        st.markdown("""
+        <div style="background: #fee2e2; border: 1px solid #dc2626; 
+                    color: #dc2626; padding: 1rem; border-radius: 5px;">
+            ⚠️ Batch pricing not available for this model. Using standard pricing.
+        </div>
+        """, unsafe_allow_html=True)
     
     st.markdown("---")
     
@@ -260,7 +308,7 @@ with col1:
     
     with metric_col1:
         st.markdown(f"""
-        <div class="metric-card">
+        <div class="metric-card-green">
             <h4>📥 Input Cost</h4>
             <h2>${cost_normal_input:.6f}</h2>
             <p>{normal_input_tokens:,} tokens</p>
@@ -269,7 +317,7 @@ with col1:
     
     with metric_col2:
         st.markdown(f"""
-        <div class="metric-card">
+        <div class="metric-card-blue">
             <h4>📤 Output Cost</h4>
             <h2>${cost_output:.6f}</h2>
             <p>{total_output_tokens:,} tokens</p>
@@ -278,7 +326,7 @@ with col1:
     
     with metric_col3:
         st.markdown(f"""
-        <div class="metric-card">
+        <div class="metric-card-purple">
             <h4>🧠 Cache Cost</h4>
             <h2>${(cost_cache_write + cost_cache_read):.6f}</h2>
             <p>{(cw + cr):,} tokens</p>
@@ -287,7 +335,7 @@ with col1:
     
     with metric_col4:
         st.markdown(f"""
-        <div class="metric-card">
+        <div class="metric-card-navy">
             <h4>⏱️ Per Request</h4>
             <h2>${total_cost:.6f}</h2>
             <p>Total cost</p>
@@ -353,32 +401,28 @@ with col2:
         labels = []
         colors = []
         
-        if cost_normal_input > 0:
+        if cost_data:
             cost_data.append(cost_normal_input)
             labels.append("Input")
-            colors.append("#FF6B35")
         
         if cost_output > 0:
             cost_data.append(cost_output)
             labels.append("Output")
-            colors.append("#F7931E")
         
         if cost_cache_write > 0:
             cost_data.append(cost_cache_write)
             labels.append("Cache Write")
-            colors.append("#4ECDC4")
         
         if cost_cache_read > 0:
             cost_data.append(cost_cache_read)
             labels.append("Cache Read")
-            colors.append("#45B7D1")
         
         if cost_data:
             fig = go.Figure(data=[go.Pie(
                 labels=labels,
                 values=cost_data,
                 hole=0.4,
-                marker=dict(colors=colors),
+                marker=dict(colors=['#22c55e', '#3b82f6', '#7c3aed', '#1e3a8a']),
                 textinfo='label+percent',
                 textposition='outside'
             )])
@@ -448,9 +492,19 @@ with col3:
         compare_cost = (total_input_tokens / 1000 * compare_row['in_per_1k']) + (total_output_tokens / 1000 * compare_row['out_per_1k'])
         savings = compare_cost - total_cost
         if savings > 0:
-            st.success(f"💰 Save ${savings:.6f}")
+            st.markdown(f"""
+            <div style="background: #dcfce7; border: 1px solid #22c55e; 
+                        color: #16a34a; padding: 1rem; border-radius: 5px;">
+                💰 Save ${savings:.6f}
+            </div>
+            """, unsafe_allow_html=True)
         else:
-            st.error(f"📈 Costs ${abs(savings):.6f} more")
+            st.markdown(f"""
+            <div style="background: #fee2e2; border: 1px solid #dc2626; 
+                        color: #dc2626; padding: 1rem; border-radius: 5px;">
+                📈 Costs ${abs(savings):.6f} more
+            </div>
+            """, unsafe_allow_html=True)
 
 # Footer with additional info
 st.markdown("---")
