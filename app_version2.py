@@ -1,48 +1,20 @@
 # app.py
-import math
-import pandas as pd
 import streamlit as st
-import matplotlib.pyplot as plt
+import pandas as pd
 
-# -------------------- Page & Style --------------------
-st.set_page_config(page_title="AWS Bedrock Token Cost Calculator", page_icon="🧮", layout="wide")
+st.set_page_config(page_title="Bedrock Token Cost Calculator (Anthropic)", page_icon="🧮", layout="centered")
 
-# Minimal inline CSS to get the card-like look
-st.markdown(
-    """
-    <style>
-    .gradient-banner {
-        background: linear-gradient(90deg, #ff7a18, #ffb347);
-        color: white; padding: 18px 22px; border-radius: 14px; font-weight: 700;
-        margin-bottom: 18px; border: 1px solid rgba(255,255,255,.3);
-    }
-    .subcard {
-        background: #fff; border-radius: 14px; border: 1px solid #ececec;
-        padding: 18px; box-shadow: 0 8px 18px rgba(0,0,0,0.05);
-    }
-    .big-total {
-        background: linear-gradient(90deg, #6a11cb 0%, #2575fc 100%);
-        color: white; border-radius: 16px; padding: 26px; text-align: center;
-        box-shadow: 0 8px 22px rgba(0,0,0,0.12); border: 1px solid rgba(255,255,255,.2);
-        margin: 12px 0 16px 0;
-    }
-    .pill {
-        display:inline-block; padding:4px 10px; background:#f6f7fb; border:1px solid #ececec;
-        border-radius:999px; font-size:12px; color:#666; margin-left:6px;
-    }
-    .muted { color:#666; font-size: 13px; }
-    .metric-label { font-size: 14px; color:#6b7280; margin-bottom: 2px; }
-    .metric-value { font-size: 26px; font-weight: 800; margin-bottom: 0; }
-    .metric-sub { font-size: 12px; color:#9ca3af; }
-    .section-title { font-weight: 800; font-size: 20px; margin: 4px 0 12px 0; }
-    .hint { font-size: 12px; color:#6b7280; }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
+st.title("🧮 AWS Bedrock Token Cost Calculator — Anthropic ")
 
-# -------------------- Pricing (USD per 1K tokens) --------------------
+
+# ---------------------------
+# Pricing table (USD per 1K tokens)
+# Keys are model names as shown in the screenshot.
+# batch_* uses the batch columns when available (N/A shown as None).
+# cache_* applies to input tokens when writing to or reading from the cache.
+# ---------------------------
 PRICING = [
+    # name, in, out, batch_in, batch_out, cache_write, cache_read
     ("Claude Opus 4.1",         0.015,   0.075,   None,     None,     0.01875, 0.0015),
     ("Claude Opus 4",           0.015,   0.075,   None,     None,     0.01875, 0.0015),
     ("Claude Sonnet 4",         0.003,   0.015,   None,     None,     0.00375, 0.0003),
@@ -58,227 +30,123 @@ PRICING = [
     ("Claude 2.0",              0.008,   0.024,   None,     None,     None,    None),
     ("Claude Instant",          0.0008,  0.0024,  None,     None,     None,    None),
 ]
+
 df = pd.DataFrame(PRICING, columns=[
     "Model", "in_per_1k", "out_per_1k", "batch_in_per_1k", "batch_out_per_1k", "cache_write_per_1k", "cache_read_per_1k"
 ]).set_index("Model")
 
-# -------------------- Helpers --------------------
-def pick_price(row, use_batch, key_normal, key_batch):
-    if use_batch and not math.isnan(row[key_batch]) if row[key_batch] is not None else False:
-        return row[key_batch]
-    return row[key_normal]
-
-def compute_costs(row, use_batch, in_tokens, out_tokens, use_cache=False, cache_w=0, cache_r=0):
-    in_price  = pick_price(row, use_batch, "in_per_1k",  "batch_in_per_1k")
-    out_price = pick_price(row, use_batch, "out_per_1k", "batch_out_per_1k")
-    cache_w_price = row["cache_write_per_1k"] if pd.notna(row["cache_write_per_1k"]) else None
-    cache_r_price = row["cache_read_per_1k"]  if pd.notna(row["cache_read_per_1k"])  else None
-
-    cw = max(0, min(cache_w, in_tokens)) if use_cache else 0
-    cr = max(0, min(cache_r, in_tokens - cw)) if use_cache else 0
-    normal_in = max(0, in_tokens - cw - cr)
-
-    cost_in   = (normal_in / 1000.0) * in_price
-    cost_out  = (out_tokens / 1000.0) * out_price
-    cost_cw   = (cw / 1000.0) * (cache_w_price or 0)
-    cost_cr   = (cr / 1000.0) * (cache_r_price or 0)
-    cache_cost = (0 if not use_cache else (cost_cw + cost_cr))
-
-    breakdown = [
-        ("Input tokens (billed)", normal_in, in_price, cost_in),
-        ("Output tokens", out_tokens, out_price, cost_out),
-    ]
-    if use_cache:
-        breakdown.append(("Cache write (subset of input)", cw, cache_w_price, cost_cw if cache_w_price else float("nan")))
-        breakdown.append(("Cache read (subset of input)",  cr, cache_r_price, cost_cr if cache_r_price else float("nan")))
-
-    total = cost_in + cost_out + (cache_cost if use_cache else 0)
-    return total, cost_in, cost_out, cache_cost, breakdown, dict(
-        in_price=in_price, out_price=out_price, cw_price=cache_w_price, cr_price=cache_r_price,
-        normal_in=normal_in, cw=cw, cr=cr
-    )
-
-# -------------------- Sidebar --------------------
 with st.sidebar:
-    st.header("⚙️ Configuration")
+    st.subheader("Inputs")
+    model = st.selectbox("Model", df.index.tolist(), index=0)
+    use_batch = st.toggle("Use batch pricing (where available)", value=False)
+    st.caption("If a batch price is N/A for the selected model, the normal price will be used.")
 
-    st.subheader("Model Selection")
-    selected_model = st.selectbox("Choose Claude Model", list(df.index), index=list(df.index).index("Claude Sonnet 4"))
+    total_input_tokens = st.number_input("Total input tokens", min_value=0, value=1000, step=100)
+    total_output_tokens = st.number_input("Total output tokens", min_value=0, value=1000, step=100)
 
-    row = df.loc[selected_model]
-
-    st.markdown(
-        f"""
-        <div class="subcard" style="padding:10px">
-        <b>{selected_model}</b><br>
-        <span class="muted">
-        Input: ${row['in_per_1k']:.6f}/1K • Output: ${row['out_per_1k']:.6f}/1K
-        </span>
-        </div>
-        """,
-        unsafe_allow_html=True,
+    st.markdown("---")
+    st.subheader("Cache (optional)")
+    st.caption(
+        "Specify how many input tokens are written to cache and read from cache.\n"
+        "These tokens are billed at cache rates and should be a subset of your input tokens."
     )
+    cache_write_tokens = st.number_input("Cache write tokens (subset of input)", min_value=0, value=0, step=100)
+    cache_read_tokens  = st.number_input("Cache read tokens (subset of input)",  min_value=0, value=0, step=100)
 
-    st.subheader("Pricing Options")
-    use_batch = st.toggle("Use Batch Pricing", value=False)
-    st.caption("If batch price isn't available, normal price is used.")
+    normalize = st.toggle("Automatically cap cache tokens so they don't exceed total input", value=True)
 
-    st.subheader("Token Usage")
-    col_in, col_out = st.columns(2)
-    with col_in:
-        input_tokens = st.number_input("Input Tokens", min_value=0, value=10000, step=100)
-    with col_out:
-        output_tokens = st.number_input("Output Tokens", min_value=0, value=2000, step=100)
+# Normalize / safety checks
+if normalize:
+    # ensure cache tokens don't exceed total input tokens
+    cw = min(cache_write_tokens, total_input_tokens)
+    cr = min(cache_read_tokens, max(0, total_input_tokens - cw))
+else:
+    cw, cr = cache_write_tokens, cache_read_tokens
 
-    pcol1, pcol2, pcol3 = st.columns(3)
-    with pcol1:
-        if st.button("Sm", use_container_width=True):
-            input_tokens, output_tokens = 2000, 500
-    with pcol2:
-        if st.button("Medium", use_container_width=True):
-            input_tokens, output_tokens = 10000, 2000
-    with pcol3:
-        if st.button("Large", use_container_width=True):
-            input_tokens, output_tokens = 50000, 10000
+# Any remaining input tokens that are NOT cache-read or cache-written
+normal_input_tokens = max(0, total_input_tokens - cw - cr)
 
-    st.subheader("Cache Settings")
-    enable_cache = st.toggle("Enable Cache Calculation", value=False)
-    if enable_cache:
-        cache_w = st.number_input("Cache write tokens (subset of input)", min_value=0, value=0, step=100)
-        cache_r = st.number_input("Cache read tokens (subset of input)", min_value=0, value=0, step=100)
-    else:
-        cache_w = cache_r = 0
+row = df.loc[model]
+in_price  = (row["batch_in_per_1k"]  if use_batch and pd.notna(row["batch_in_per_1k"])  else row["in_per_1k"])
+out_price = (row["batch_out_per_1k"] if use_batch and pd.notna(row["batch_out_per_1k"]) else row["out_per_1k"])
 
-    st.subheader("Monthly Projection")
-    requests_per_day = st.number_input("Requests per day", min_value=0, value=100, step=10)
+cache_write_price = row["cache_write_per_1k"] if pd.notna(row["cache_write_per_1k"]) else None
+cache_read_price  = row["cache_read_per_1k"]  if pd.notna(row["cache_read_per_1k"])  else None
 
-# -------------------- Header --------------------
-st.markdown(
-    """
-    <div class="gradient-banner">
-        <div style="font-size:20px">💰 AWS Bedrock Token Cost Calculator</div>
-        <div class="muted">Anthropic Claude Models • US East (N. Virginia) Region<span class="pill">pricing per 1K tokens</span></div>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
+# Compute costs
+cost_normal_input = (normal_input_tokens / 1000.0) * in_price
+cost_output       = (total_output_tokens / 1000.0) * out_price
 
-# -------------------- Calculations --------------------
-total_cost, cost_in, cost_out, cache_cost, breakdown_list, ctx = compute_costs(
-    row, use_batch, input_tokens, output_tokens, enable_cache, cache_w, cache_r
-)
+if cache_write_price is not None:
+    cost_cache_write = (cw / 1000.0) * cache_write_price
+else:
+    cost_cache_write = 0.0 if cw == 0 else float("nan")
 
-# -------------------- Top Metrics & Chart --------------------
-lcol, rcol = st.columns([2.2, 1.2])
+if cache_read_price is not None:
+    cost_cache_read = (cr / 1000.0) * cache_read_price
+else:
+    cost_cache_read = 0.0 if cr == 0 else float("nan")
 
-with lcol:
-    st.markdown('<div class="section-title">📊 Cost Analysis</div>', unsafe_allow_html=True)
-    c1, c2, c3, c4 = st.columns(4)
-    with c1:
-        st.markdown('<div class="subcard">', unsafe_allow_html=True)
-        st.markdown('<div class="metric-label">🧾 Input Cost</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="metric-value">${cost_in:,.6f}</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="metric-sub">{ctx["normal_in"]:,} tokens</div>', unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
+components = [
+    ("Normal input", normal_input_tokens, in_price, cost_normal_input),
+    ("Output",       total_output_tokens, out_price, cost_output),
+    ("Cache write",  cw, cache_write_price, cost_cache_write),
+    ("Cache read",   cr, cache_read_price,  cost_cache_read),
+]
 
-    with c2:
-        st.markdown('<div class="subcard">', unsafe_allow_html=True)
-        st.markdown('<div class="metric-label">🧠 Output Cost</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="metric-value">${cost_out:,.6f}</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="metric-sub">{output_tokens:,} tokens</div>', unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
+breakdown_rows = []
+total_cost = 0.0
+for label, tokens, price_per_1k, cost in components:
+    if tokens == 0 and (pd.isna(price_per_1k) or price_per_1k is None):
+        continue
+    breakdown_rows.append({
+        "Component": label,
+        "Tokens": tokens,
+        "Price / 1K": ("N/A" if (price_per_1k is None or pd.isna(price_per_1k)) else f"${price_per_1k:,.6f}"),
+        "Cost (USD)": ("" if pd.isna(cost) else f"${cost:,.6f}")
+    })
+    if not pd.isna(cost):
+        total_cost += cost
 
-    with c3:
-        st.markdown('<div class="subcard">', unsafe_allow_html=True)
-        st.markdown('<div class="metric-label">🗄️ Cache Cost</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="metric-value">${(cache_cost if enable_cache else 0):,.6f}</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="metric-sub">{(ctx["cw"]+ctx["cr"]) if enable_cache else 0:,} tokens</div>', unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
+st.markdown("### Selection")
+col1, col2 = st.columns(2)
+with col1:
+    st.write(f"**Model:** {model}")
+    st.write(f"**Batch pricing:** {'Yes' if use_batch else 'No'}")
+with col2:
+    st.write(f"**Input tokens:** {total_input_tokens:,}")
+    st.write(f"**Output tokens:** {total_output_tokens:,}")
+st.write(f"**Cache write tokens:** {cw:,}  |  **Cache read tokens:** {cr:,}")
 
-    with c4:
-        st.markdown('<div class="subcard">', unsafe_allow_html=True)
-        st.markdown('<div class="metric-label">⏱️ Per Request</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="metric-value">${total_cost:,.6f}</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="metric-sub">Total cost</div>', unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-
-    st.markdown('<div class="big-total">', unsafe_allow_html=True)
-    st.markdown(f"<div style='font-size:18px;font-weight:700'>💡 Total Estimated Cost</div>", unsafe_allow_html=True)
-    st.markdown(f"<div style='font-size:28px;font-weight:900'>${total_cost:,.6f}</div>", unsafe_allow_html=True)
-    st.markdown(f"<div class='hint'>For {(ctx['normal_in'] + (ctx['cw'] if enable_cache else 0) + (ctx['cr'] if enable_cache else 0) + output_tokens):,} total tokens</div>", unsafe_allow_html=True)
-    st.markdown('</div>', unsafe_allow_html=True)
-
-with rcol:
-    st.markdown('<div class="section-title">📈 Cost Visualization</div>', unsafe_allow_html=True)
-    with st.container():
-        fig, ax = plt.subplots()
-        values = [cost_in, cost_out]
-        labels = ["Input", "Output"]
-        if enable_cache and cache_cost > 0:
-            values.append(cache_cost)
-            labels.append("Cache")
-        if sum(values) == 0:
-            values = [1]  # avoid zero pie
-            labels = ["No cost"]
-        ax.pie(values, labels=labels, autopct="%1.0f%%", startangle=90)
-        ax.axis("equal")
-        st.pyplot(fig, use_container_width=True)
-
-# -------------------- Breakdown Table --------------------
-st.markdown('<div class="section-title">📄 Detailed Breakdown</div>', unsafe_allow_html=True)
-breakdown_df = pd.DataFrame(
-    [{"Component": n, "Tokens": t, "Rate per 1K": ("" if r is None or pd.isna(r) else f"${r:,.6f}"), "Cost (USD)": ("" if pd.isna(c) else f"${c:,.6f}")} for n, t, r, c in breakdown_list]
-)
+st.markdown("### Cost breakdown")
+breakdown_df = pd.DataFrame(breakdown_rows)
 st.dataframe(breakdown_df, use_container_width=True)
 
-# -------------------- Usage Scenarios --------------------
-scenarios = [
-    ("eChatbot (2k in, 200 out)", 2000, 200),
-    ("Content Gen (5k in, 2k out)", 5000, 2000),
-    ("Analysis (10k in, 1k out)", 10000, 1000),
-    ("Summarization (20k in, 500 out)", 20000, 500),
-]
-rows = []
-for name, IN, OUT in scenarios:
-    sc_total, *_ = compute_costs(row, use_batch, IN, OUT, enable_cache=False)
-    rows.append({"Scenario": name, "Cost": f"${sc_total:,.6f}"})
-sc_df = pd.DataFrame(rows)
+st.markdown(f"## Total estimated cost: **${total_cost:,.6f}**")
 
-uc1, uc2 = st.columns([2, 1])
-with uc1:
-    st.markdown('<div class="section-title">💡 Usage Scenarios</div>', unsafe_allow_html=True)
-    st.dataframe(sc_df, use_container_width=True)
-with uc2:
-    st.markdown('<div class="section-title">📤 Export Options</div>', unsafe_allow_html=True)
-    csv = breakdown_df.to_csv(index=False)
-    st.download_button("⬇️ Download CSV", data=csv, file_name="bedrock_cost_breakdown.csv", mime="text/csv", use_container_width=True)
+# Download breakdown
+csv = breakdown_df.to_csv(index=False)
+st.download_button(
+    "Download breakdown (CSV)",
+    data=csv,
+    file_name="bedrock_cost_breakdown.csv",
+    mime="text/csv"
+)
 
-# -------------------- Monthly Projection --------------------
-st.markdown('<div class="section-title">📅 Monthly Projection</div>', unsafe_allow_html=True)
-monthly_cost = total_cost * requests_per_day * 30
-st.write(f"**Requests per day:** {requests_per_day:,}")
-st.write(f"### Monthly Cost: **${monthly_cost:,.2f}**")
+# Show the raw price row for quick reference
+st.markdown("#### Pricing row (per 1K tokens)")
+display_row = row.copy()
+display_row = display_row.rename({
+    "in_per_1k": "input",
+    "out_per_1k": "output",
+    "batch_in_per_1k": "batch_input",
+    "batch_out_per_1k": "batch_output",
+    "cache_write_per_1k": "cache_write_input",
+    "cache_read_per_1k": "cache_read_input",
+})
+st.table(display_row.to_frame("USD").style.format({"USD": "{:.6f}"}))
 
-# -------------------- Quick Compare --------------------
-st.markdown('<div class="section-title">⚖️ Quick Compare</div>', unsafe_allow_html=True)
-alt_model = st.selectbox("Compare with", list(df.index), index=list(df.index).index("Claude Opus 4.1"))
-alt_row = df.loc[alt_model]
-alt_total, *_ = compute_costs(alt_row, use_batch, input_tokens, output_tokens, enable_cache, cache_w, cache_r)
-delta = alt_total - total_cost
-if delta >= 0:
-    st.success(f"✅ You save **${delta:,.6f}** vs {alt_model}")
-else:
-    st.warning(f"⚠️ {alt_model} is **${-delta:,.6f}** cheaper for this request")
-
-# -------------------- Footnotes --------------------
-st.markdown(
-    """
-    <hr>
-    <div class="hint">
-    Pro Tip: Cache tokens can reduce costs for repeated content. |
-    Prices are for US East (N. Virginia). |
-    This calculator provides estimates—always verify with official AWS pricing.
-    </div>
-    """,
-    unsafe_allow_html=True,
+st.caption(
+    "Notes: Cache prices apply only to input tokens. "
+    "This calculator treats cache-write and cache-read tokens as subsets of your total input tokens."
 )
